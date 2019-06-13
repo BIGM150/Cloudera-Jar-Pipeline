@@ -1,0 +1,197 @@
+from tkinter import *
+from tkinter.ttk import Progressbar
+import os
+from tkinter import filedialog
+import pysftp
+from tkinter import messagebox
+import paramiko
+import threading            
+import queue as Queue
+
+class Automation:
+    def __init__(self, window):
+        self.window = window
+        window.title("Jar Piple")
+        window.geometry('350x200')
+         
+        #UserName & Password
+        self.Label_Username = Label(window, text="EDGENODE USERNAME")
+        self.Label_Username.grid(row=0,column=1)
+        self.UserName_txt = Entry(window,width=10)
+        self.UserName_txt.grid(row = 1,column =1)
+        self.Label_Password = Label(window, text="EDGENODE_PASSWORD")
+        self.Label_Password.grid(row=2,column=1)
+        self.Password_txt = Entry(window,show="*",width=10)
+        self.Password_txt.grid(row = 3,column =1)
+       
+        # File Browser
+        self.Browse_btn = Button(window, text="Browse for Jar", command=self.BrowseFile_Procedure)
+        self.Browse_btn.grid(row = 5,column =2)
+        # Jars browser 
+        self.ExcelFileName_Dynamic = StringVar()
+        self.BrowseFileName = Label(self.window, textvariable= self.ExcelFileName_Dynamic)
+        self.BrowseFileName.grid(row = 4,column =2)
+        self.Excel_FileName_txt = ""
+
+        # SFTP Option and SSH option
+        self.SFTP_Bt = BooleanVar()
+        self.SSH_Bt = BooleanVar()
+        Checkbutton(window,text = "SFTP",variable = self.SFTP_Bt).grid(row = 1,column =3,sticky =W)
+        Checkbutton(window,text = "SSH",variable = self.SSH_Bt).grid(row = 2,column =3,sticky =W)
+
+        self.Deprec_Table_Bt = BooleanVar()
+        self.Table_Modify_Bt = BooleanVar()
+        # Spark command 
+        self.Label_SparkCommand = Label(window, text="Spark Command")
+        self.Label_SparkCommand.grid(row=2,column=2)
+        self.SparkCommand_txt = Entry(window,width=40)
+        self.SparkCommand_txt.grid(row = 3,column =2)
+        
+        #NUID Password
+        self.NUID_Password = Label(window, text="NUID_PASSWORD")
+        self.NUID_Password.grid(row=4,column=1)
+        self.Password_NUID_txt = Entry(window,show="*",width=10)
+        self.Password_NUID_txt.grid(row = 5,column =1)
+
+        # Spark Directory
+        self.Label_SparkDirectory = Label(window, text="Spark Directory")
+        self.Label_SparkDirectory.grid(row=0,column=2)
+        self.SparkDirectory_txt = Entry(window,width=40)
+        self.SparkDirectory_txt.grid(row = 1,column =2)
+
+        # Que
+        self.Thread_Deamon_Flag = False
+        self.Thread_Deamon = ""
+
+        #Submit  Button 
+        self.btn = Button(window, text="Submit Spark Jar", command=self.Initiate_Procedure)
+        self.btn.grid(column=1, row=7)
+        
+        #DISPLAY Text
+        self.text_D = Text(window,width= 80,height= 50)
+        self.text_D.grid(row=8,column=6)
+
+    def Initiate_Procedure(self): 
+        # parametors: User & password ; Jar & Target directory and Spark command
+       if self.UserName_txt.get() != "" and self.Password_txt.get() != ""  and self.SparkDirectory_txt.get() != ""  :
+            #print(self.Excel_FileName_txt)
+            self.progress()
+            self.prog_bar.start()
+            self.queue = Queue.Queue()
+            self.btn['state']='disabled'
+
+            # Que
+            self.Thread_Deamon=ThreadedTask(self.queue )
+            self.Thread_Deamon.start()
+            self.window.after(100, self.process_queue)
+
+
+    def SSH(self):
+        try:
+            if self.Thread_Deamon_Flag != True:
+                client = paramiko.SSHClient()
+                client.load_system_host_keys()
+                client.set_missing_host_key_policy(paramiko.WarningPolicy)
+                client.connect('##HOST###', port=22, username=self.UserName_txt.get(), password=self.Password_txt.get())
+
+                # remove the last character from NUIDA
+                NUID = self.UserName_txt.get()
+                NUID=NUID[:-1]
+                #Kinit
+                Knit_Command = 'kinit ' + NUID
+                stdin, stdout, stderr = client.exec_command(Knit_Command)
+                stdin.write(self.Password_NUID_txt.get() + '\n')
+                stdin.flush()
+                self.text_D.insert(INSERT, "Sucessfull SSH Connection \n ")
+                #Chmod the file
+                Chmod_CM="chmod +x " + self.Excel_FileName_txt
+                # cd into directory
+                CD_Command = 'cd ' +  self.SparkDirectory_txt.get() + "; " + Chmod_CM + "; " + self.SparkCommand_txt.get()  
+                stdin, stdout, stderr = client.exec_command( CD_Command )
+                self.text_D.insert(INSERT, stdout.read())
+               
+                client.close()
+        except:
+            messagebox.showerror("SSH Failed", "SSH Failed: check password ,username") 
+            self.Password_NUID_txt.grid(row = 5,column =1) 
+            self.Thread_Deamon_Flag = True
+            
+    def SFTP(self):
+        try:
+            if self.Thread_Deamon_Flag != True:
+                cnopts = pysftp.CnOpts()
+                cnopts.hostkeys = None
+                with pysftp.Connection('pzxdap5.pldc.kp.org', username=self.UserName_txt.get(), password=self.Password_txt.get() ,cnopts=cnopts) as sftp:
+                    try:
+                        sftp.chdir(self.SparkDirectory_txt.get())
+                    except: 
+                        messagebox.showerror("SFTP ERROR", "Edge node directory does not exist")
+                        self.Thread_Deamon_Flag = True
+
+                    if self.Thread_Deamon_Flag != True:
+                        try:
+                            sftp.put( self.Excel_FileName_txt)
+                            self.text_D.insert(INSERT,"Successful SFTP of " + self.Excel_FileName_txt + "\n")
+                            sftp.close()
+                        except:
+                            messagebox.showerror("SFTP ERROR","No Jar or File choosen to sftp")
+                            self.Thread_Deamon_Flag = True
+        except:
+            messagebox.showerror("SFTP ERROR", "SFTP Failed: check password ,username or edge node directory")
+            self.Thread_Deamon_Flag = True
+
+
+    def BrowseFile_Procedure(self):
+        self.Excel_FileName_txt = filedialog.askopenfilename(initialdir = "/", title = "Select A File", filetype = (("All Files","*.*"), ("xls","*.xls"),("xlsx","*.xlsx")))
+        File_Browsed = self.Excel_FileName_txt
+        File_Browsed =  str(File_Browsed).split("/")
+        self.ExcelFileName_Dynamic.set(str(File_Browsed[len( File_Browsed)-1]))
+# Progress Bar
+    def progress(self):
+        self.prog_bar = Progressbar(self.window, orient="horizontal",length=200, mode="indeterminate")
+        self.prog_bar.grid( row = 5, column = 3)
+
+
+    # Que Run Function
+    #Thread Queoe
+    def process_queue(self):
+        try:
+            # Show result of the task if needed
+            msg = self.queue.get(0)
+            self.prog_bar.stop()
+            self.prog_bar.grid_forget()
+            self.btn['state']='normal'
+            # Allow for A Thread to begin
+            self.Thread_Deamon_Flag = False
+            self.Thread_Deamon.join()
+        except Queue.Empty:
+            self.window.after(100, self.process_queue)
+# Thread Class. The run method in the class starts all function calls.
+class ThreadedTask(threading.Thread):
+    stop_event = threading.Event()
+    def __init__(self, queue):
+        threading.Thread.__init__(self)
+        self.queue = queue
+        self.daemon = True  # This makes the background task dependent to main. In application closed, all background task is terminated
+    def run(self):
+        #Data Processing Method
+        # clear box 
+        Automation_Tool.text_D.delete(1.0,END)
+        # Remove the NUID Password
+        Automation_Tool.Password_NUID_txt.grid_remove()
+        if Automation_Tool.SFTP_Bt.get():
+            Automation_Tool.SFTP()
+        # call the ssh command 
+        if Automation_Tool.SSH_Bt.get():
+             Automation_Tool.SSH()
+           
+        # Releasing the task in Queue
+        self.queue.put("Task finished")
+
+#Main Loop
+if __name__ == '__main__': 
+    #Tkinter Object
+    root = Tk()
+    #GUI Class Object Automation
+    Automation_Tool = Automation(root)
+    root.mainloop()
